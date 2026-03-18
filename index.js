@@ -1,15 +1,18 @@
 const express = require("express");
 const cors = require("cors");
-const express = require("express");
-const cors = require("cors");
 const fetch = (...args) => import("node-fetch").then(({default: fetch}) => fetch(...args));
 
-// === CARGAR CONFIGURACIÓN ===
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// === CARGAR CONFIGURACIÓN (config.js o variables de entorno) ===
 let config = {};
 try {
   config = require("./config.js");
+  console.log("✅ config.js cargado correctamente");
 } catch (err) {
-  // Si no existe config.js, usar variables de entorno
+  console.log("⚠️ config.js no encontrado, usando variables de entorno");
   config = {
     PRESTASHOP_URL: process.env.PRESTASHOP_URL || "https://tiendadivertina.com",
     PRESTASHOP_API_KEY: process.env.PRESTASHOP_API_KEY
@@ -18,21 +21,11 @@ try {
 
 const PRESTASHOP_URL = config.PRESTASHOP_URL;
 const PRESTASHOP_API_KEY = config.PRESTASHOP_API_KEY;
-const fetch = (...args) => import("node-fetch").then(({default: fetch}) => fetch(...args));
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// === DEBUG ===
-console.log("🔍 ENV CHECK:");
-console.log("PRESTASHOP_URL:", process.env.PRESTASHOP_URL);
-console.log("PRESTASHOP_API_KEY exists:", !!process.env.PRESTASHOP_API_KEY);
-console.log("All PRESTA vars:", Object.keys(process.env).filter(k => k.includes('PRESTA')));
-
-// === CONFIGURACIÓN DESDE VARIABLES DE ENTORNO ===
-const PRESTASHOP_URL = process.env.PRESTASHOP_URL || "https://tiendadivertina.com";
-const PRESTASHOP_API_KEY = process.env.PRESTASHOP_API_KEY;
+// === DEBUG: Verificar configuración ===
+console.log("🔍 PRESTASHOP_URL:", PRESTASHOP_URL);
+console.log("🔍 PRESTASHOP_API_KEY existe:", !!PRESTASHOP_API_KEY);
+console.log("🔍 API Key (primeros 8 chars):", PRESTASHOP_API_KEY ? PRESTASHOP_API_KEY.substring(0, 8) + "..." : "NO CONFIGURADA");
 
 // === CACHE DE PRODUCTOS ===
 let productosCache = [];
@@ -50,8 +43,7 @@ async function obtenerProductos() {
   }
   
   if (!PRESTASHOP_API_KEY) {
-    console.warn("⚠️ MODO DEMO: PRESTASHOP_API_KEY no configurada en Railway");
-    // Modo demo con productos de ejemplo
+    console.warn("⚠️ MODO DEMO: Sin clave API de PrestaShop");
     return [
       { id: 1, nombre: "Juguete Divertido", precio: "29.99€", url: `${PRESTASHOP_URL}/juguete-divertido-1.html`, categoria: "Juguetes", descripcion: "Perfecto para niños de 3 a 8 años." },
       { id: 2, nombre: "Juego de Mesa Familiar", precio: "24.99€", url: `${PRESTASHOP_URL}/juego-mesa-familiar-2.html`, categoria: "Juegos", descripcion: "Ideal para tardes en familia. 2-6 jugadores." },
@@ -62,7 +54,6 @@ async function obtenerProductos() {
   try {
     console.log("🔄 Conectando con PrestaShop API...");
     
-    // Petición a API de PrestaShop con campos disponibles
     const response = await fetch(
       `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,description_short,active,id_category_default]&output_format=JSON&filter[active]=1`,
       {
@@ -119,7 +110,7 @@ async function obtenerProductos() {
         descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 120) : '',
         activo: p.active
       };
-    }).slice(0, 50); // Máximo 50 productos
+    }).slice(0, 50);
     
     ultimaActualizacion = ahora;
     console.log(`✅ ${productosCache.length} productos cargados desde PrestaShop`);
@@ -127,7 +118,7 @@ async function obtenerProductos() {
     return productosCache;
   } catch (error) {
     console.error("❌ Error al obtener productos:", error.message);
-    return productosCache; // Devolver cache anterior si falla
+    return productosCache;
   }
 }
 
@@ -139,7 +130,7 @@ const infoTienda = {
   contacto: "WhatsApp: 600 000 000 | Email: info@tiendadivertina.com"
 };
 
-// === GENERAR RESPUESTA CON IA ===
+// === GENERAR RESPUESTA ===
 async function generarRespuesta(mensajeUsuario) {
   const productos = await obtenerProductos();
   const msg = mensajeUsuario.toLowerCase().trim();
@@ -172,7 +163,6 @@ async function generarRespuesta(mensajeUsuario) {
   
   // === BÚSQUEDA POR PALABRAS CLAVE ===
   else if (msg.length > 3) {
-    // Buscar en nombre del producto
     const filtrados = productos.filter(p => 
       p.nombre.toLowerCase().includes(msg) ||
       p.descripcion.toLowerCase().includes(msg) ||
@@ -192,7 +182,6 @@ async function generarRespuesta(mensajeUsuario) {
       
       respuesta += "¿Te interesa alguno?";
     } 
-    // Búsquedas específicas por tipo
     else if (/juguete|niño|niña|infantil/i.test(msg)) {
       const juguetes = productos.filter(p => 
         p.nombre.toLowerCase().includes('juguete') || 
@@ -209,7 +198,7 @@ async function generarRespuesta(mensajeUsuario) {
         });
         respuesta += "¿Cuál te gusta más?";
       } else {
-        respuesta = "Tenemos juguetes divertidos. ¿Qué edad tiene el niño/a? Así te recomiendo algo perfecto.";
+        respuesta = "Tenemos juguetes divertidos. ¿Qué edad tiene el niño/a?";
       }
     }
     else if (/peluche|suave|regalo/i.test(msg)) {
@@ -245,23 +234,22 @@ async function generarRespuesta(mensajeUsuario) {
         });
         respuesta += "¿Para cuántas personas buscas?";
       } else {
-        respuesta = "¡Tenemos juegos para toda la familia! ¿Buscas para niños o adultos?";
+        respuesta = "¡Tenemos juegos para toda la familia!";
       }
     }
     else {
-      respuesta = "¡Interesante pregunta! 🤔 Puedo ayudarte con:\n\n🛍️ Productos y recomendaciones\n📦 Envíos y entregas\n💳 Métodos de pago\n🔄 Devoluciones\n\n¿En qué te ayudo?";
+      respuesta = "¡Interesante pregunta! 🤔 Puedo ayudarte con:\n\n🛍️ Productos\n📦 Envíos\n💳 Pagos\n🔄 Devoluciones\n\n¿En qué te ayudo?";
     }
   }
   
   // === PRECIOS ===
-  else if (/precio|cuánto|cuanto|caro|barato|económico|economico/i.test(msg)) {
+  else if (/precio|cuánto|cuanto|caro|barato/i.test(msg)) {
     if (productos.length === 0) {
-      respuesta = "No tengo información de precios en este momento. ¿Puedo ayudarte con otra cosa?";
+      respuesta = "No tengo información de precios ahora. ¿Puedo ayudarte con otra cosa?";
     } else {
       const precios = productos.map(p => parseFloat(p.precio)).filter(p => !isNaN(p));
       const min = Math.min(...precios).toFixed(2);
       const max = Math.max(...precios).toFixed(2);
-      
       respuesta = `Nuestros productos van desde ${min}€ hasta ${max}€.\n\n`;
       
       const baratos = productos.filter(p => parseFloat(p.precio) <= 25).slice(0, 3);
@@ -276,27 +264,27 @@ async function generarRespuesta(mensajeUsuario) {
   }
   
   // === ENVÍOS ===
-  else if (/envío|envio|entrega|llega|cuándo llega|cuando llega/i.test(msg)) {
+  else if (/envío|envio|entrega|llega/i.test(msg)) {
     respuesta = `📦 ${infoTienda.envios}\n\n¿Desde qué ciudad nos escribes?`;
   }
   
   // === DEVOLUCIONES ===
-  else if (/devolución|devolucion|cambiar|garantía|garantia|reembolso/i.test(msg)) {
+  else if (/devolución|devolucion|cambiar|garantía|reembolso/i.test(msg)) {
     respuesta = `✅ ${infoTienda.devoluciones}\n\n¿Tienes algún problema con un pedido?`;
   }
   
   // === PAGO ===
-  else if (/pago|pagar|tarjeta|paypal|contrareembolso|efectivo/i.test(msg)) {
+  else if (/pago|pagar|tarjeta|paypal|contrareembolso/i.test(msg)) {
     respuesta = `💳 ${infoTienda.pago}\n\n¿Con qué método prefieres pagar?`;
   }
   
-  // === DESCUENTO / OFERTA ===
-  else if (/descuento|oferta|promo|código|codigo|cupón|cupon/i.test(msg)) {
+  // === DESCUENTO ===
+  else if (/descuento|oferta|promo|código|cupón/i.test(msg)) {
     respuesta = `🎁 ¡10% de descuento en tu primera compra! Usa el código: *BIENVENIDO10*\n\n¿Quieres que te ayude a encontrar el producto perfecto?`;
   }
   
-  // === CARRITO / COMPRAR ===
-  else if (/carrito|comprar|pedido|cesta|añadir|agregar/i.test(msg)) {
+  // === CARRITO ===
+  else if (/carrito|comprar|pedido|cesta|añadir/i.test(msg)) {
     respuesta = `🛒 Para comprar:\n\n1. Haz clic en 'Ver producto'\n2. Añádelo al carrito\n3. Ve al carrito (arriba derecha)\n4. Completa tus datos\n\n¿Necesitas ayuda?`;
   }
   
@@ -306,18 +294,18 @@ async function generarRespuesta(mensajeUsuario) {
   }
   
   // === CONTACTO ===
-  else if (/contacto|teléfono|telefono|whatsapp|email|correo|ayuda humana/i.test(msg)) {
-    respuesta = `📞 ${infoTienda.contacto}\n\n¿Prefieres que te llamemos o te escribimos por WhatsApp?`;
+  else if (/contacto|teléfono|whatsapp|email|ayuda humana/i.test(msg)) {
+    respuesta = `📞 ${infoTienda.contacto}\n\n¿Prefieres que te llamemos o te escribimos?`;
   }
   
   // === DESPEDIDA ===
-  else if (/adiós|adios|gracias|hasta|bye|chao/i.test(msg)) {
+  else if (/adiós|gracias|hasta|bye|chao/i.test(msg)) {
     respuesta = `¡Gracias por visitar TiendaDivertina! 🎉 Si necesitas algo más, aquí estaré. ¡Que tengas un día divertido! 😊`;
   }
   
   // === RESPUESTA POR DEFECTO ===
   else {
-    respuesta = `¡Hola! 👋 Soy el asistente de TiendaDivertina. Puedo ayudarte con:\n\n🛍️ Productos y recomendaciones\n📦 Envíos y entregas\n💳 Métodos de pago\n🔄 Devoluciones\n\n¿En qué te ayudo?`;
+    respuesta = `¡Hola! 👋 Soy el asistente de TiendaDivertina. Puedo ayudarte con:\n\n🛍️ Productos\n📦 Envíos\n💳 Pagos\n🔄 Devoluciones\n\n¿En qué te ayudo?`;
   }
 
   return respuesta;
@@ -325,7 +313,7 @@ async function generarRespuesta(mensajeUsuario) {
 
 // === RUTAS ===
 app.get("/", (req, res) => {
-  res.send("🛍️ Chatbot Vendedor - TiendaDivertina.com 🚀<br><br>Servidor funcionando correctamente. Usa POST /chat para enviar mensajes.");
+  res.send("🛍️ Chatbot Vendedor - TiendaDivertina.com 🚀<br><br>Servidor funcionando. Usa POST /chat para enviar mensajes.");
 });
 
 app.post("/chat", async (req, res) => {
@@ -338,7 +326,7 @@ app.post("/chat", async (req, res) => {
     
     console.log("📩 Mensaje recibido:", mensaje);
     const respuesta = await generarRespuesta(mensaje);
-    console.log("💬 Respuesta enviada (primeros 100 chars):", respuesta.substring(0, 100) + "...");
+    console.log("💬 Respuesta enviada:", respuesta.substring(0, 100) + "...");
     
     res.json({ reply: respuesta });
     
