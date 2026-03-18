@@ -1,5 +1,23 @@
 const express = require("express");
 const cors = require("cors");
+const express = require("express");
+const cors = require("cors");
+const fetch = (...args) => import("node-fetch").then(({default: fetch}) => fetch(...args));
+
+// === CARGAR CONFIGURACIÓN ===
+let config = {};
+try {
+  config = require("./config.js");
+} catch (err) {
+  // Si no existe config.js, usar variables de entorno
+  config = {
+    PRESTASHOP_URL: process.env.PRESTASHOP_URL || "https://tiendadivertina.com",
+    PRESTASHOP_API_KEY: process.env.PRESTASHOP_API_KEY
+  };
+}
+
+const PRESTASHOP_URL = config.PRESTASHOP_URL;
+const PRESTASHOP_API_KEY = config.PRESTASHOP_API_KEY;
 const fetch = (...args) => import("node-fetch").then(({default: fetch}) => fetch(...args));
 
 const app = express();
