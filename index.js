@@ -35,7 +35,7 @@ async function obtenerProductos() {
   
   try {
     const response = await fetch(
-      `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,category_default]&output_format=JSON`,
+       `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,id_category_default,description_short,active]&output_format=JSON&filter[active]=1`,
       {
         headers: {
           'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
