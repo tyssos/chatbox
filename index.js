@@ -21,23 +21,26 @@ async function obtenerProductos() {
   
   // Usar cache si está vigente
   if (productosCache.length > 0 && ahora - ultimaActualizacion < CACHE_TIEMPO) {
+    console.log("📦 Usando cache de productos");
     return productosCache;
   }
   
   if (!PRESTASHOP_API_KEY) {
-    console.warn("⚠️ Modo demo: Sin clave API de PrestaShop");
+    console.warn("⚠️ MODO DEMO: PRESTASHOP_API_KEY no configurada en Railway");
     // Modo demo con productos de ejemplo
     return [
-      { id: 1, nombre: "Juguete Divertido", precio: "29.99€", url: `${PRESTASHOP_URL}/juguete-divertido`, categoria: "Juguetes", descripcion: "Perfecto para niños de 3 a 8 años." },
-      { id: 2, nombre: "Juego de Mesa Familiar", precio: "24.99€", url: `${PRESTASHOP_URL}/juego-mesa`, categoria: "Juegos", descripcion: "Ideal para tardes en familia. 2-6 jugadores." },
-      { id: 3, nombre: "Peluche Suave", precio: "19.99€", url: `${PRESTASHOP_URL}/peluche`, categoria: "Peluches", descripcion: "Suave y abrazable. Perfecto para regalar." }
+      { id: 1, nombre: "Juguete Divertido", precio: "29.99€", url: `${PRESTASHOP_URL}/juguete-divertido-1.html`, categoria: "Juguetes", descripcion: "Perfecto para niños de 3 a 8 años." },
+      { id: 2, nombre: "Juego de Mesa Familiar", precio: "24.99€", url: `${PRESTASHOP_URL}/juego-mesa-familiar-2.html`, categoria: "Juegos", descripcion: "Ideal para tardes en familia. 2-6 jugadores." },
+      { id: 3, nombre: "Peluche Suave", precio: "19.99€", url: `${PRESTASHOP_URL}/peluche-suave-3.html`, categoria: "Peluches", descripcion: "Suave y abrazable. Perfecto para regalar." }
     ];
   }
   
   try {
+    console.log("🔄 Conectando con PrestaShop API...");
+    
     // Petición a API de PrestaShop con campos disponibles
     const response = await fetch(
-      `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,description_short,active]&output_format=JSON`,
+      `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,description_short,active,id_category_default]&output_format=JSON&filter[active]=1`,
       {
         headers: {
           'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
@@ -46,21 +49,53 @@ async function obtenerProductos() {
     );
     
     if (!response.ok) {
-      throw new Error(`PrestaShop API error: ${response.status}`);
+      throw new Error(`PrestaShop API error: ${response.status} - ${response.statusText}`);
     }
     
     const data = await response.json();
     
+    if (!data.products || data.products.length === 0) {
+      console.warn("⚠️ No hay productos activos en PrestaShop");
+      return [];
+    }
+    
+    // Obtener categorías para mapear nombres
+    let categorias = {};
+    try {
+      const catResponse = await fetch(
+        `${PRESTASHOP_URL}/api/categories?display=[id,name]&output_format=JSON`,
+        {
+          headers: {
+            'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
+          }
+        }
+      );
+      if (catResponse.ok) {
+        const catData = await catResponse.json();
+        categorias = {};
+        (catData.categories || []).forEach(cat => {
+          categorias[cat.id] = cat.name;
+        });
+      }
+    } catch (err) {
+      console.log("⚠️ No se pudieron cargar categorías, usando IDs");
+    }
+    
     // Procesar productos
-    productosCache = (data.products || []).map(p => ({
-      id: p.id,
-      nombre: p.name,
-      precio: `${parseFloat(p.price).toFixed(2)}€`,
-      url: `${PRESTASHOP_URL}/${p.link_rewrite}`,
-      categoria: "Producto",
-      descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 100) : '',
-      activo: p.active
-    })).slice(0, 50); // Máximo 50 productos
+    productosCache = data.products.map(p => {
+      // Construir URL correcta (formato PrestaShop estándar)
+      const url = `${PRESTASHOP_URL}/es/${p.link_rewrite}-${p.id}.html`;
+      
+      return {
+        id: p.id,
+        nombre: p.name,
+        precio: `${parseFloat(p.price).toFixed(2)}€`,
+        url: url,
+        categoria: categorias[p.id_category_default] || `Categoría ${p.id_category_default}`,
+        descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 120) : '',
+        activo: p.active
+      };
+    }).slice(0, 50); // Máximo 50 productos
     
     ultimaActualizacion = ahora;
     console.log(`✅ ${productosCache.length} productos cargados desde PrestaShop`);
@@ -93,23 +128,31 @@ async function generarRespuesta(mensajeUsuario) {
   
   // === MOSTRAR CATÁLOGO ===
   else if (/producto|catálogo|catalogo|tienda|qué tenéis|que teneis/i.test(msg)) {
-    const primeros = productos.slice(0, 5);
-    respuesta = "Tenemos estos productos destacados:\n\n";
-    
-    primeros.forEach((p, i) => {
-      respuesta += `${i+1}. *${p.nombre}* - ${p.precio}\n`;
-      respuesta += `${p.descripcion}\n`;
-      respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:8px 16px;background:#667eea;color:white;text-decoration:none;border-radius:20px;font-size:13px;">Ver producto</a>\n\n`;
-    });
-    
-    respuesta += "¿Te interesa alguno o buscas algo específico?";
+    if (productos.length === 0) {
+      respuesta = "Lo siento, en este momento no tenemos productos disponibles. ¿Puedo ayudarte con otra cosa?";
+    } else {
+      const primeros = productos.slice(0, 5);
+      respuesta = "Tenemos estos productos destacados:\n\n";
+      
+      primeros.forEach((p, i) => {
+        respuesta += `${i+1}. *${p.nombre}* - ${p.precio}\n`;
+        if (p.descripcion) {
+          respuesta += `${p.descripcion}\n`;
+        }
+        respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#FF6B9D;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
+      });
+      
+      respuesta += `¿Te interesa alguno? Tenemos ${productos.length} productos disponibles.`;
+    }
   }
   
   // === BÚSQUEDA POR PALABRAS CLAVE ===
   else if (msg.length > 3) {
     // Buscar en nombre del producto
     const filtrados = productos.filter(p => 
-      p.nombre.toLowerCase().includes(msg)
+      p.nombre.toLowerCase().includes(msg) ||
+      p.descripcion.toLowerCase().includes(msg) ||
+      p.categoria.toLowerCase().includes(msg)
     );
     
     if (filtrados.length > 0) {
@@ -120,19 +163,25 @@ async function generarRespuesta(mensajeUsuario) {
         if (p.descripcion) {
           respuesta += `${p.descripcion}\n`;
         }
-        respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:8px 16px;background:#667eea;color:white;text-decoration:none;border-radius:20px;font-size:13px;">Ver producto</a>\n\n`;
+        respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
       
       respuesta += "¿Te interesa alguno?";
     } 
     // Búsquedas específicas por tipo
     else if (/juguete|niño|niña|infantil/i.test(msg)) {
-      const juguetes = productos.filter(p => p.nombre.toLowerCase().includes('juguete') || p.categoria.toLowerCase().includes('juguete'));
+      const juguetes = productos.filter(p => 
+        p.nombre.toLowerCase().includes('juguete') || 
+        p.categoria.toLowerCase().includes('juguete') ||
+        p.categoria.toLowerCase().includes('niño')
+      );
+      
       if (juguetes.length > 0) {
         respuesta = `Te recomiendo estos juguetes:\n\n`;
         juguetes.slice(0, 3).forEach(p => {
           respuesta += `🎁 *${p.nombre}* - ${p.precio}\n`;
-          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:8px 16px;background:#667eea;color:white;text-decoration:none;border-radius:20px;font-size:13px;">Ver producto</a>\n\n`;
+          if (p.descripcion) respuesta += `${p.descripcion}\n`;
+          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#FF8E53;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
         });
         respuesta += "¿Cuál te gusta más?";
       } else {
@@ -140,25 +189,35 @@ async function generarRespuesta(mensajeUsuario) {
       }
     }
     else if (/peluche|suave|regalo/i.test(msg)) {
-      const peluches = productos.filter(p => p.nombre.toLowerCase().includes('peluche') || p.nombre.toLowerCase().includes('suave'));
+      const peluches = productos.filter(p => 
+        p.nombre.toLowerCase().includes('peluche') || 
+        p.nombre.toLowerCase().includes('suave')
+      );
+      
       if (peluches.length > 0) {
         respuesta = `Estos peluches son adorables:\n\n`;
         peluches.slice(0, 3).forEach(p => {
           respuesta += `🧸 *${p.nombre}* - ${p.precio}\n`;
-          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:8px 16px;background:#667eea;color:white;text-decoration:none;border-radius:20px;font-size:13px;">Ver producto</a>\n`;
-          respuesta += `<small style="color:#888;">¿Es para regalar? 🎁</small>\n\n`;
+          if (p.descripcion) respuesta += `${p.descripcion}\n`;
+          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#FF6B9D;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n`;
+          respuesta += `<small style="color:#FFD93D;">¿Es para regalar? 🎁</small>\n\n`;
         });
       } else {
         respuesta = "Tenemos peluches muy suaves. ¿Qué animal o personaje te gusta?";
       }
     }
     else if (/juego|mesa|familia/i.test(msg)) {
-      const juegos = productos.filter(p => p.nombre.toLowerCase().includes('juego') || p.categoria.toLowerCase().includes('juego'));
+      const juegos = productos.filter(p => 
+        p.nombre.toLowerCase().includes('juego') || 
+        p.nombre.toLowerCase().includes('mesa')
+      );
+      
       if (juegos.length > 0) {
         respuesta = `Estos juegos de mesa son ideales:\n\n`;
         juegos.slice(0, 3).forEach(p => {
           respuesta += `🎮 *${p.nombre}* - ${p.precio}\n`;
-          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:8px 16px;background:#667eea;color:white;text-decoration:none;border-radius:20px;font-size:13px;">Ver producto</a>\n\n`;
+          if (p.descripcion) respuesta += `${p.descripcion}\n`;
+          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
         });
         respuesta += "¿Para cuántas personas buscas?";
       } else {
@@ -172,10 +231,13 @@ async function generarRespuesta(mensajeUsuario) {
   
   // === PRECIOS ===
   else if (/precio|cuánto|cuanto|caro|barato|económico|economico/i.test(msg)) {
-    const precios = productos.map(p => parseFloat(p.precio)).filter(p => !isNaN(p));
-    if (precios.length > 0) {
+    if (productos.length === 0) {
+      respuesta = "No tengo información de precios en este momento. ¿Puedo ayudarte con otra cosa?";
+    } else {
+      const precios = productos.map(p => parseFloat(p.precio)).filter(p => !isNaN(p));
       const min = Math.min(...precios).toFixed(2);
       const max = Math.max(...precios).toFixed(2);
+      
       respuesta = `Nuestros productos van desde ${min}€ hasta ${max}€.\n\n`;
       
       const baratos = productos.filter(p => parseFloat(p.precio) <= 25).slice(0, 3);
@@ -183,11 +245,9 @@ async function generarRespuesta(mensajeUsuario) {
         respuesta += "Estos son económicos:\n";
         baratos.forEach(p => {
           respuesta += `💰 *${p.nombre}* - ${p.precio}\n`;
-          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:8px 16px;background:#667eea;color:white;text-decoration:none;border-radius:20px;font-size:13px;">Ver producto</a>\n\n`;
+          respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
         });
       }
-    } else {
-      respuesta = "Tenemos productos para todos los presupuestos. ¿Qué tipo de producto buscas?";
     }
   }
   
@@ -213,7 +273,7 @@ async function generarRespuesta(mensajeUsuario) {
   
   // === CARRITO / COMPRAR ===
   else if (/carrito|comprar|pedido|cesta|añadir|agregar/i.test(msg)) {
-    respuesta = `🛒 Para comprar:\n\n1. Haz clic en el producto que te guste\n2. Añádelo al carrito\n3. Ve al carrito (arriba derecha)\n4. Completa tus datos\n\n¿Necesitas ayuda?`;
+    respuesta = `🛒 Para comprar:\n\n1. Haz clic en 'Ver producto'\n2. Añádelo al carrito\n3. Ve al carrito (arriba derecha)\n4. Completa tus datos\n\n¿Necesitas ayuda?`;
   }
   
   // === STOCK ===
@@ -241,7 +301,7 @@ async function generarRespuesta(mensajeUsuario) {
 
 // === RUTAS ===
 app.get("/", (req, res) => {
-  res.send("🛍️ Chatbot Vendedor - TiendaDivertina.com 🚀");
+  res.send("🛍️ Chatbot Vendedor - TiendaDivertina.com 🚀<br><br>Servidor funcionando correctamente. Usa POST /chat para enviar mensajes.");
 });
 
 app.post("/chat", async (req, res) => {
@@ -254,7 +314,7 @@ app.post("/chat", async (req, res) => {
     
     console.log("📩 Mensaje recibido:", mensaje);
     const respuesta = await generarRespuesta(mensaje);
-    console.log("💬 Respuesta enviada:", respuesta.substring(0, 100) + "...");
+    console.log("💬 Respuesta enviada (primeros 100 chars):", respuesta.substring(0, 100) + "...");
     
     res.json({ reply: respuesta });
     
@@ -266,8 +326,14 @@ app.post("/chat", async (req, res) => {
 
 // === CARGAR PRODUCTOS AL INICIAR ===
 if (PRESTASHOP_API_KEY) {
-  console.log("🔄 Cargando productos de PrestaShop...");
-  obtenerProductos();
+  console.log("🔄 Cargando productos de PrestaShop al iniciar...");
+  obtenerProductos().then(() => {
+    console.log("✅ Productos inicializados");
+  }).catch(err => {
+    console.error("❌ Error al inicializar productos:", err.message);
+  });
+} else {
+  console.log("⚠️ Iniciando en MODO DEMO (sin conexión a PrestaShop)");
 }
 
 // === INICIAR SERVIDOR ===
@@ -275,4 +341,6 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🛍️ Chatbot corriendo en puerto ${PORT}`);
   console.log(`🌐 URL: ${process.env.RAILWAY_STATIC_URL || 'http://localhost:' + PORT}`);
+  console.log(`🏪 Tienda: ${PRESTASHOP_URL}`);
+  console.log(`🔑 API: ${PRESTASHOP_API_KEY ? 'Configurada' : 'NO configurada'}`);
 });
