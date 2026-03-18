@@ -3,6 +3,17 @@ const cors = require("cors");
 const fetch = (...args) => import("node-fetch").then(({default: fetch}) => fetch(...args));
 
 const app = express();
+// === DEBUG AVANZADO ===
+console.log("=".repeat(50));
+console.log("🔍 ENVIRONMENT VARIABLES DEBUG");
+console.log("=".repeat(50));
+console.log("PRESTASHOP_URL:", process.env.PRESTASHOP_URL);
+console.log("PRESTASHOP_API_KEY:", process.env.PRESTASHOP_API_KEY ? "EXISTS (hidden)" : "UNDEFINED");
+console.log("API Key length:", process.env.PRESTASHOP_API_KEY ? process.env.PRESTASHOP_API_KEY.length : 0);
+console.log("All env vars with PRESTA:", JSON.stringify(
+  Object.keys(process.env).filter(k => k.includes('PRESTA'))
+));
+console.log("=".repeat(50));
 app.use(cors());
 app.use(express.json());
 
