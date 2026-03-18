@@ -6,6 +6,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// === DEBUG ===
+console.log("🔍 ENV CHECK:");
+console.log("PRESTASHOP_URL:", process.env.PRESTASHOP_URL);
+console.log("PRESTASHOP_API_KEY exists:", !!process.env.PRESTASHOP_API_KEY);
+console.log("All PRESTA vars:", Object.keys(process.env).filter(k => k.includes('PRESTA')));
+
 // === CONFIGURACIÓN DESDE VARIABLES DE ENTORNO ===
 const PRESTASHOP_URL = process.env.PRESTASHOP_URL || "https://tiendadivertina.com";
 const PRESTASHOP_API_KEY = process.env.PRESTASHOP_API_KEY;
