@@ -8,7 +8,7 @@ app.use(express.json());
 
 // === CONFIGURACIÓN DESDE VARIABLES DE ENTORNO ===
 const PRESTASHOP_URL = process.env.PRESTASHOP_URL || "https://tiendadivertina.com";
-const PRESTASHOP_API_KEY = "SXUD85F8SQ79JS2AG3GFFHPPRQRY9J8V";
+const PRESTASHOP_API_KEY = process.env.PRESTASHOP_API_KEY;
 
 // === CACHE DE PRODUCTOS ===
 let productosCache = [];
