@@ -27,41 +27,7 @@ console.log("🔍 API Key:", PRESTASHOP_API_KEY ? "EXISTS" : "NO");
 
 // === CACHE ===
 let productosCache = [];
-let categoriasCache = {};
 let ultimaActualizacion = 0;
-
-// === OBTENER CATEGORÍAS ===
-async function obtenerCategorias() {
-  if (Object.keys(categoriasCache).length > 0) return categoriasCache;
-  
-  try {
-    const response = await fetch(
-      `${PRESTASHOP_URL}/api/categories?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,link_rewrite]`,
-      {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      }
-    );
-    
-    if (!response.ok) return {};
-    
-    const data = await response.json();
-    
-    categoriasCache = {};
-    (data.categories || []).forEach(cat => {
-      if (cat.id && cat.link_rewrite) {
-        categoriasCache[cat.id] = cat.link_rewrite;
-      }
-    });
-    
-    return categoriasCache;
-  } catch (error) {
-    console.error("❌ Error categorías:", error.message);
-    return {};
-  }
-}
 
 // === OBTENER PRODUCTOS ===
 async function obtenerProductos() {
@@ -74,49 +40,26 @@ async function obtenerProductos() {
   
   if (!PRESTASHOP_API_KEY) {
     console.warn("⚠️ MODO DEMO");
-    return [];
+    return [
+      { id: 1, nombre: "Producto Demo", precio: "10.00€", url: "#", descripcion: "Modo demo" }
+    ];
   }
   
   try {
     console.log("🔄 Conectando con PrestaShop...");
     
-    // Obtener categorías primero
-    const categorias = await obtenerCategorias();
-    
-    // === API URL CON TODOS LOS PARÁMETROS ===
-    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,price_tax_incl,link_rewrite,id_category_default,active]&filter[active]=1&limit=1000`;
+    // === USAR ws_key en URL (más compatible) ===
+    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite]`;
     
     console.log("📡 URL API:", apiUrl);
     
-    // === HEADERS PARA EVITAR BLOQUEO DE CLOUDFLARE ===
-    const response = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      }
-    });
+    const response = await fetch(apiUrl);
     
     console.log("📊 Status:", response.status);
     
     if (!response.ok) {
-      const contentType = response.headers.get('content-type');
-      console.log("📄 Content-Type:", contentType);
-      
       const text = await response.text();
-      console.log("❌ Respuesta:", text.substring(0, 300));
-      
-      // Verificar si es HTML (Cloudflare blocking)
-      if (contentType && contentType.includes('text/html')) {
-        throw new Error("Cloudflare bloqueó la petición - HTML recibido en lugar de JSON");
-      }
-      
+      console.log("❌ Respuesta:", text.substring(0, 200));
       throw new Error(`API error: ${response.status}`);
     }
     
@@ -125,34 +68,26 @@ async function obtenerProductos() {
     console.log("📦 Productos recibidos:", data.products ? data.products.length : 0);
     
     if (!data.products || data.products.length === 0) {
-      console.warn("⚠️ No hay productos activos");
+      console.warn("⚠️ No hay productos");
       return [];
     }
     
-    // Procesar TODOS los productos
+    // Procesar productos SIN categorías
     productosCache = data.products.map(p => {
-      const categoria = categorias[p.id_category_default] || 'animales';
-      
-      // URL SIN ID: /category/link_rewrite
-      const url = `${PRESTASHOP_URL}/${categoria}/${p.link_rewrite}`;
-      
-      // === USAR PRECIO CON IVA (price_tax_incl) ===
-      const precioConIVA = p.price_tax_incl ? parseFloat(p.price_tax_incl) : parseFloat(p.price);
+      // Formato: /id-link_rewrite (PrestaShop redirige automáticamente)
+      const url = `${PRESTASHOP_URL}/${p.id}-${p.link_rewrite}`;
       
       return {
         id: p.id,
         nombre: p.name,
-        precio: `${precioConIVA.toFixed(2)}€`,
+        precio: `${parseFloat(p.price).toFixed(2)}€`,
         url: url,
-        categoria: categoria,
-        descripcion: "",
-        precioSinIVA: parseFloat(p.price),
-        precioConIVA: precioConIVA
+        descripcion: ""
       };
-    }); // SIN slice - mostrar TODOS los productos
+    }).slice(0, 50);
     
     ultimaActualizacion = ahora;
-    console.log(`✅ ${productosCache.length} productos activos cargados con IVA`);
+    console.log(`✅ ${productosCache.length} productos cargados`);
     
     return productosCache;
   } catch (error) {
@@ -185,20 +120,16 @@ async function generarRespuesta(mensajeUsuario) {
     if (productos.length === 0) {
       respuesta = "No tenemos productos disponibles ahora. ¿Puedo ayudarte con otra cosa?";
     } else {
-      const primeros = productos.slice(0, 10); // Mostrar hasta 10 productos
-      respuesta = `Tenemos ${productos.length} productos disponibles:\n\n`;
+      const primeros = productos.slice(0, 5);
+      respuesta = "Tenemos estos productos:\n\n";
       
       primeros.forEach((p, i) => {
-        respuesta += `${i+1}. *${p.nombre}* - ${p.precio} (IVA incl.)\n`;
+        respuesta += `${i+1}. *${p.nombre}* - ${p.precio}\n`;
         if (p.descripcion) respuesta += `${p.descripcion}\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#FF6B9D;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
       
-      if (productos.length > 10) {
-        respuesta += `... y ${productos.length - 10} productos más. ¿Buscas algo específico?`;
-      } else {
-        respuesta += `¿Te interesa alguno?`;
-      }
+      respuesta += `¿Te interesa alguno? Tenemos ${productos.length} productos.`;
     }
   }
   
@@ -212,8 +143,8 @@ async function generarRespuesta(mensajeUsuario) {
     if (filtrados.length > 0) {
       respuesta = `Encontré ${filtrados.length} producto${filtrados.length > 1 ? 's' : ''}:\n\n`;
       
-      filtrados.slice(0, 5).forEach(p => {
-        respuesta += `🔍 *${p.nombre}* - ${p.precio} (IVA incl.)\n`;
+      filtrados.slice(0, 3).forEach(p => {
+        respuesta += `🔍 *${p.nombre}* - ${p.precio}\n`;
         if (p.descripcion) respuesta += `${p.descripcion}\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
@@ -237,10 +168,10 @@ async function generarRespuesta(mensajeUsuario) {
   // PRECIOS
   else if (/precio|cuánto|barato/i.test(msg)) {
     if (productos.length > 0) {
-      const baratos = productos.filter(p => p.precioConIVA <= 25).slice(0, 5);
+      const baratos = productos.filter(p => parseFloat(p.precio) <= 25).slice(0, 3);
       respuesta = "Productos económicos:\n\n";
       baratos.forEach(p => {
-        respuesta += `💰 *${p.nombre}* - ${p.precio} (IVA incl.)\n`;
+        respuesta += `💰 *${p.nombre}* - ${p.precio}\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
     }
@@ -316,7 +247,7 @@ app.post("/chat", async (req, res) => {
 
 // === INICIAR ===
 if (PRESTASHOP_API_KEY) {
-  console.log("🔄 Cargando productos activos...");
+  console.log("🔄 Cargando productos...");
   obtenerProductos();
 }
 
