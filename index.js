@@ -6,11 +6,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// === CARGAR CONFIGURACIÓN ===
+// === CONFIGURACIÓN ===
 let config = {};
 try {
   config = require("./config.js");
-  console.log("✅ config.js cargado correctamente");
+  console.log("✅ config.js cargado");
 } catch (err) {
   console.log("⚠️ config.js no encontrado, usando variables de entorno");
   config = {
@@ -27,96 +27,62 @@ console.log("🔍 API Key:", PRESTASHOP_API_KEY ? "EXISTS" : "NO");
 
 // === CACHE ===
 let productosCache = [];
-let categoriasCache = {};
 let ultimaActualizacion = 0;
-const CACHE_TIEMPO = 5 * 60 * 1000;
-
-// === OBTENER CATEGORÍAS ===
-async function obtenerCategorias() {
-  if (Object.keys(categoriasCache).length > 0) return categoriasCache;
-  
-  try {
-    const response = await fetch(
-      `${PRESTASHOP_URL}/api/categories?display=[id,link_rewrite]&output_format=JSON`,
-      {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
-        }
-      }
-    );
-    
-    if (!response.ok) return {};
-    
-    const data = await response.json();
-    
-    categoriasCache = {};
-    (data.categories || []).forEach(cat => {
-      if (cat.id && cat.link_rewrite) {
-        categoriasCache[cat.id] = cat.link_rewrite;
-      }
-    });
-    
-    return categoriasCache;
-  } catch (error) {
-    console.error("❌ Error categorías:", error.message);
-    return {};
-  }
-}
 
 // === OBTENER PRODUCTOS ===
 async function obtenerProductos() {
   const ahora = Date.now();
   
-  if (productosCache.length > 0 && ahora - ultimaActualizacion < CACHE_TIEMPO) {
+  if (productosCache.length > 0 && ahora - ultimaActualizacion < 300000) {
     console.log("📦 Usando cache");
     return productosCache;
   }
   
   if (!PRESTASHOP_API_KEY) {
     console.warn("⚠️ MODO DEMO");
-    return [];
+    return [
+      { id: 1, nombre: "Producto Demo", precio: "10.00€", url: "#", descripcion: "Modo demo" }
+    ];
   }
   
   try {
-    console.log("🔄 Conectando con PrestaShop API...");
+    console.log("🔄 Conectando con PrestaShop...");
     
-    // Obtener categorías primero
-    const categorias = await obtenerCategorias();
+    // === USAR ws_key en URL (más compatible) ===
+    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite]`;
     
-    // Obtener productos CON categoría
-    const response = await fetch(
-      `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,description_short,id_category_default]&output_format=JSON`,
-      {
-        headers: {
-          'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
-        }
-      }
-    );
+    console.log("📡 URL API:", apiUrl);
+    
+    const response = await fetch(apiUrl);
+    
+    console.log("📊 Status:", response.status);
     
     if (!response.ok) {
+      const text = await response.text();
+      console.log("❌ Respuesta:", text.substring(0, 200));
       throw new Error(`API error: ${response.status}`);
     }
     
     const data = await response.json();
+    
+    console.log("📦 Productos recibidos:", data.products ? data.products.length : 0);
     
     if (!data.products || data.products.length === 0) {
       console.warn("⚠️ No hay productos");
       return [];
     }
     
-    // Procesar productos con URL CORRECTA
+    // Procesar productos SIN categorías
     productosCache = data.products.map(p => {
-      const categoria = categorias[p.id_category_default] || 'animales';
+      // Formato: /id-link_rewrite (PrestaShop redirige automáticamente)
+      const url = `${PRESTASHOP_URL}/${p.id}-${p.link_rewrite}`;
       
       return {
         id: p.id,
         nombre: p.name,
         precio: `${parseFloat(p.price).toFixed(2)}€`,
-        // === URL FORMATO PRESTASHOP REAL ===
-        url: `${PRESTASHOP_URL}/${categoria}/${p.id}-${p.link_rewrite}`,
-        categoria: categoria,
-        descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 120) : '',
-        activo: true
+        url: url,
+        descripcion: ""
       };
     }).slice(0, 50);
     
