@@ -39,7 +39,8 @@ async function obtenerCategorias() {
       `${PRESTASHOP_URL}/api/categories?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,link_rewrite]`,
       {
         headers: {
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
       }
     );
@@ -82,22 +83,40 @@ async function obtenerProductos() {
     // Obtener categorías primero
     const categorias = await obtenerCategorias();
     
-    // === OBTENER SOLO PRODUCTOS ACTIVOS ===
-    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite,id_category_default]&filter[active]=1`;
+    // === API URL CON TODOS LOS PARÁMETROS ===
+    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,price_tax_incl,link_rewrite,id_category_default,active]&filter[active]=1&limit=1000`;
     
     console.log("📡 URL API:", apiUrl);
     
+    // === HEADERS PARA EVITAR BLOQUEO DE CLOUDFLARE ===
     const response = await fetch(apiUrl, {
+      method: 'GET',
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
       }
     });
     
     console.log("📊 Status:", response.status);
     
     if (!response.ok) {
+      const contentType = response.headers.get('content-type');
+      console.log("📄 Content-Type:", contentType);
+      
       const text = await response.text();
-      console.log("❌ Respuesta:", text.substring(0, 200));
+      console.log("❌ Respuesta:", text.substring(0, 300));
+      
+      // Verificar si es HTML (Cloudflare blocking)
+      if (contentType && contentType.includes('text/html')) {
+        throw new Error("Cloudflare bloqueó la petición - HTML recibido en lugar de JSON");
+      }
+      
       throw new Error(`API error: ${response.status}`);
     }
     
@@ -110,25 +129,30 @@ async function obtenerProductos() {
       return [];
     }
     
-    // Procesar productos SIN ID en la URL
+    // Procesar TODOS los productos
     productosCache = data.products.map(p => {
       const categoria = categorias[p.id_category_default] || 'animales';
       
-      // === URL SIN ID: /category/link_rewrite ===
+      // URL SIN ID: /category/link_rewrite
       const url = `${PRESTASHOP_URL}/${categoria}/${p.link_rewrite}`;
+      
+      // === USAR PRECIO CON IVA (price_tax_incl) ===
+      const precioConIVA = p.price_tax_incl ? parseFloat(p.price_tax_incl) : parseFloat(p.price);
       
       return {
         id: p.id,
         nombre: p.name,
-        precio: `${parseFloat(p.price).toFixed(2)}€`,
+        precio: `${precioConIVA.toFixed(2)}€`,
         url: url,
         categoria: categoria,
-        descripcion: ""
+        descripcion: "",
+        precioSinIVA: parseFloat(p.price),
+        precioConIVA: precioConIVA
       };
-    }).slice(0, 50);
+    }); // SIN slice - mostrar TODOS los productos
     
     ultimaActualizacion = ahora;
-    console.log(`✅ ${productosCache.length} productos activos cargados`);
+    console.log(`✅ ${productosCache.length} productos activos cargados con IVA`);
     
     return productosCache;
   } catch (error) {
@@ -161,16 +185,20 @@ async function generarRespuesta(mensajeUsuario) {
     if (productos.length === 0) {
       respuesta = "No tenemos productos disponibles ahora. ¿Puedo ayudarte con otra cosa?";
     } else {
-      const primeros = productos.slice(0, 5);
-      respuesta = "Tenemos estos productos:\n\n";
+      const primeros = productos.slice(0, 10); // Mostrar hasta 10 productos
+      respuesta = `Tenemos ${productos.length} productos disponibles:\n\n`;
       
       primeros.forEach((p, i) => {
-        respuesta += `${i+1}. *${p.nombre}* - ${p.precio}\n`;
+        respuesta += `${i+1}. *${p.nombre}* - ${p.precio} (IVA incl.)\n`;
         if (p.descripcion) respuesta += `${p.descripcion}\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#FF6B9D;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
       
-      respuesta += `¿Te interesa alguno? Tenemos ${productos.length} productos.`;
+      if (productos.length > 10) {
+        respuesta += `... y ${productos.length - 10} productos más. ¿Buscas algo específico?`;
+      } else {
+        respuesta += `¿Te interesa alguno?`;
+      }
     }
   }
   
@@ -184,8 +212,8 @@ async function generarRespuesta(mensajeUsuario) {
     if (filtrados.length > 0) {
       respuesta = `Encontré ${filtrados.length} producto${filtrados.length > 1 ? 's' : ''}:\n\n`;
       
-      filtrados.slice(0, 3).forEach(p => {
-        respuesta += `🔍 *${p.nombre}* - ${p.precio}\n`;
+      filtrados.slice(0, 5).forEach(p => {
+        respuesta += `🔍 *${p.nombre}* - ${p.precio} (IVA incl.)\n`;
         if (p.descripcion) respuesta += `${p.descripcion}\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
@@ -209,10 +237,10 @@ async function generarRespuesta(mensajeUsuario) {
   // PRECIOS
   else if (/precio|cuánto|barato/i.test(msg)) {
     if (productos.length > 0) {
-      const baratos = productos.filter(p => parseFloat(p.precio) <= 25).slice(0, 3);
+      const baratos = productos.filter(p => p.precioConIVA <= 25).slice(0, 5);
       respuesta = "Productos económicos:\n\n";
       baratos.forEach(p => {
-        respuesta += `💰 *${p.nombre}* - ${p.precio}\n`;
+        respuesta += `💰 *${p.nombre}* - ${p.precio} (IVA incl.)\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
     }
