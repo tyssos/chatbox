@@ -74,8 +74,8 @@ async function obtenerProductos() {
     
     // Procesar productos SIN categorías
     productosCache = data.products.map(p => {
-      // Formato: /id-link_rewrite (PrestaShop redirige automáticamente)
-      const url = `${PRESTASHOP_URL}/${p.id}-${p.link_rewrite}`;
+      // === URL SIN ID: /link_rewrite ===
+      const url = `${PRESTASHOP_URL}/${p.link_rewrite}`;
       
       return {
         id: p.id,
