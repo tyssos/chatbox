@@ -76,8 +76,7 @@ async function obtenerProductos() {
       id: p.id,
       nombre: p.name,
       precio: `${parseFloat(p.price).toFixed(2)}€`,
-      // === URL CORREGIDA: Formato PrestaShop real ===
-      url: `${PRESTASHOP_URL}/${p.id}-${p.link_rewrite}`,
+      url: `${PRESTASHOP_URL}/es/${p.link_rewrite}-${p.id}.html`,
       categoria: "Producto",
       descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 120) : '',
       activo: true
