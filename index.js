@@ -48,12 +48,17 @@ async function obtenerProductos() {
   try {
     console.log("🔄 Conectando con PrestaShop...");
     
-    // === USAR ws_key en URL (más compatible) ===
-    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite]`;
+    // === FILTROS: activos + con stock disponible ===
+    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite,active,available_for_order,out_of_stock]&filter[active]=1&filter[available_for_order]=1&limit=1000`;
     
     console.log("📡 URL API:", apiUrl);
     
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
     
     console.log("📊 Status:", response.status);
     
@@ -68,13 +73,25 @@ async function obtenerProductos() {
     console.log("📦 Productos recibidos:", data.products ? data.products.length : 0);
     
     if (!data.products || data.products.length === 0) {
-      console.warn("⚠️ No hay productos");
+      console.warn("⚠️ No hay productos activos con stock");
       return [];
     }
     
-    // Procesar productos SIN categorías
-    productosCache = data.products.map(p => {
-      // === URL SIN ID: /link_rewrite ===
+    // === FILTRAR EN CÓDIGO POR SI LA API NO RESPETA LOS FILTROS ===
+    const productosFiltrados = (data.products || []).filter(p => {
+      const activo = p.active == 1 || p.active == "1";
+      const disponible = p.available_for_order == 1 || p.available_for_order == "1" || p.out_of_stock == 0 || p.out_of_stock == "0";
+      return activo && disponible;
+    });
+    
+    if (productosFiltrados.length === 0) {
+      console.warn("⚠️ Ningún producto cumple los filtros de activo + stock");
+      return [];
+    }
+    
+    // Procesar productos
+    productosCache = productosFiltrados.map(p => {
+      // URL SIN ID: /link_rewrite
       const url = `${PRESTASHOP_URL}/${p.link_rewrite}`;
       
       return {
@@ -82,12 +99,14 @@ async function obtenerProductos() {
         nombre: p.name,
         precio: `${parseFloat(p.price).toFixed(2)}€`,
         url: url,
-        descripcion: ""
+        descripcion: "",
+        activo: p.active == 1,
+        conStock: p.available_for_order == 1 || p.out_of_stock == 0
       };
-    }).slice(0, 50);
+    });
     
     ultimaActualizacion = ahora;
-    console.log(`✅ ${productosCache.length} productos cargados`);
+    console.log(`✅ ${productosCache.length} productos activos con stock cargados`);
     
     return productosCache;
   } catch (error) {
@@ -120,8 +139,8 @@ async function generarRespuesta(mensajeUsuario) {
     if (productos.length === 0) {
       respuesta = "No tenemos productos disponibles ahora. ¿Puedo ayudarte con otra cosa?";
     } else {
-      const primeros = productos.slice(0, 5);
-      respuesta = "Tenemos estos productos:\n\n";
+      const primeros = productos.slice(0, 10);
+      respuesta = `Tenemos ${productos.length} productos disponibles:\n\n`;
       
       primeros.forEach((p, i) => {
         respuesta += `${i+1}. *${p.nombre}* - ${p.precio}\n`;
@@ -129,7 +148,11 @@ async function generarRespuesta(mensajeUsuario) {
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#FF6B9D;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
       });
       
-      respuesta += `¿Te interesa alguno? Tenemos ${productos.length} productos.`;
+      if (productos.length > 10) {
+        respuesta += `... y ${productos.length - 10} productos más. ¿Buscas algo específico?`;
+      } else {
+        respuesta += `¿Te interesa alguno?`;
+      }
     }
   }
   
@@ -143,7 +166,7 @@ async function generarRespuesta(mensajeUsuario) {
     if (filtrados.length > 0) {
       respuesta = `Encontré ${filtrados.length} producto${filtrados.length > 1 ? 's' : ''}:\n\n`;
       
-      filtrados.slice(0, 3).forEach(p => {
+      filtrados.slice(0, 5).forEach(p => {
         respuesta += `🔍 *${p.nombre}* - ${p.precio}\n`;
         if (p.descripcion) respuesta += `${p.descripcion}\n`;
         respuesta += `<a href="${p.url}" target="_blank" style="display:inline-block;margin:8px 0;padding:10px 20px;background:#4ECDC4;color:white;text-decoration:none;border-radius:20px;font-size:13px;font-weight:bold;">🛍️ Ver producto</a>\n\n`;
@@ -168,7 +191,7 @@ async function generarRespuesta(mensajeUsuario) {
   // PRECIOS
   else if (/precio|cuánto|barato/i.test(msg)) {
     if (productos.length > 0) {
-      const baratos = productos.filter(p => parseFloat(p.precio) <= 25).slice(0, 3);
+      const baratos = productos.filter(p => parseFloat(p.precio) <= 25).slice(0, 5);
       respuesta = "Productos económicos:\n\n";
       baratos.forEach(p => {
         respuesta += `💰 *${p.nombre}* - ${p.precio}\n`;
@@ -247,7 +270,7 @@ app.post("/chat", async (req, res) => {
 
 // === INICIAR ===
 if (PRESTASHOP_API_KEY) {
-  console.log("🔄 Cargando productos...");
+  console.log("🔄 Cargando productos activos con stock...");
   obtenerProductos();
 }
 
