@@ -27,7 +27,40 @@ console.log("🔍 API Key:", PRESTASHOP_API_KEY ? "EXISTS" : "NO");
 
 // === CACHE ===
 let productosCache = [];
+let categoriasCache = {};
 let ultimaActualizacion = 0;
+
+// === OBTENER CATEGORÍAS ===
+async function obtenerCategorias() {
+  if (Object.keys(categoriasCache).length > 0) return categoriasCache;
+  
+  try {
+    const response = await fetch(
+      `${PRESTASHOP_URL}/api/categories?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,link_rewrite]`,
+      {
+        headers: {
+          'Accept': 'application/json'
+        }
+      }
+    );
+    
+    if (!response.ok) return {};
+    
+    const data = await response.json();
+    
+    categoriasCache = {};
+    (data.categories || []).forEach(cat => {
+      if (cat.id && cat.link_rewrite) {
+        categoriasCache[cat.id] = cat.link_rewrite;
+      }
+    });
+    
+    return categoriasCache;
+  } catch (error) {
+    console.error("❌ Error categorías:", error.message);
+    return {};
+  }
+}
 
 // === OBTENER PRODUCTOS ===
 async function obtenerProductos() {
@@ -40,20 +73,25 @@ async function obtenerProductos() {
   
   if (!PRESTASHOP_API_KEY) {
     console.warn("⚠️ MODO DEMO");
-    return [
-      { id: 1, nombre: "Producto Demo", precio: "10.00€", url: "#", descripcion: "Modo demo" }
-    ];
+    return [];
   }
   
   try {
     console.log("🔄 Conectando con PrestaShop...");
     
-    // === USAR ws_key en URL (más compatible) ===
-    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite]`;
+    // Obtener categorías primero
+    const categorias = await obtenerCategorias();
+    
+    // === OBTENER SOLO PRODUCTOS ACTIVOS ===
+    const apiUrl = `${PRESTASHOP_URL}/api/products?ws_key=${PRESTASHOP_API_KEY}&output_format=JSON&display=[id,name,price,link_rewrite,id_category_default]&filter[active]=1`;
     
     console.log("📡 URL API:", apiUrl);
     
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
     
     console.log("📊 Status:", response.status);
     
@@ -68,26 +106,29 @@ async function obtenerProductos() {
     console.log("📦 Productos recibidos:", data.products ? data.products.length : 0);
     
     if (!data.products || data.products.length === 0) {
-      console.warn("⚠️ No hay productos");
+      console.warn("⚠️ No hay productos activos");
       return [];
     }
     
-    // Procesar productos SIN categorías
+    // Procesar productos SIN ID en la URL
     productosCache = data.products.map(p => {
-      // Formato: /id-link_rewrite (PrestaShop redirige automáticamente)
-      const url = `${PRESTASHOP_URL}/${p.id}-${p.link_rewrite}`;
+      const categoria = categorias[p.id_category_default] || 'animales';
+      
+      // === URL SIN ID: /category/link_rewrite ===
+      const url = `${PRESTASHOP_URL}/${categoria}/${p.link_rewrite}`;
       
       return {
         id: p.id,
         nombre: p.name,
         precio: `${parseFloat(p.price).toFixed(2)}€`,
         url: url,
+        categoria: categoria,
         descripcion: ""
       };
     }).slice(0, 50);
     
     ultimaActualizacion = ahora;
-    console.log(`✅ ${productosCache.length} productos cargados`);
+    console.log(`✅ ${productosCache.length} productos activos cargados`);
     
     return productosCache;
   } catch (error) {
@@ -247,7 +288,7 @@ app.post("/chat", async (req, res) => {
 
 // === INICIAR ===
 if (PRESTASHOP_API_KEY) {
-  console.log("🔄 Cargando productos...");
+  console.log("🔄 Cargando productos activos...");
   obtenerProductos();
 }
 
