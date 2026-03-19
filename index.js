@@ -22,14 +22,46 @@ try {
 const PRESTASHOP_URL = config.PRESTASHOP_URL;
 const PRESTASHOP_API_KEY = config.PRESTASHOP_API_KEY;
 
-// === DEBUG ===
-console.log("🔍 PRESTASHOP_URL:", PRESTASHOP_URL);
-console.log("🔍 PRESTASHOP_API_KEY existe:", !!PRESTASHOP_API_KEY);
+console.log("🔍 URL:", PRESTASHOP_URL);
+console.log("🔍 API Key:", PRESTASHOP_API_KEY ? "EXISTS" : "NO");
 
 // === CACHE ===
 let productosCache = [];
+let categoriasCache = {};
 let ultimaActualizacion = 0;
 const CACHE_TIEMPO = 5 * 60 * 1000;
+
+// === OBTENER CATEGORÍAS ===
+async function obtenerCategorias() {
+  if (Object.keys(categoriasCache).length > 0) return categoriasCache;
+  
+  try {
+    const response = await fetch(
+      `${PRESTASHOP_URL}/api/categories?display=[id,link_rewrite]&output_format=JSON`,
+      {
+        headers: {
+          'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
+        }
+      }
+    );
+    
+    if (!response.ok) return {};
+    
+    const data = await response.json();
+    
+    categoriasCache = {};
+    (data.categories || []).forEach(cat => {
+      if (cat.id && cat.link_rewrite) {
+        categoriasCache[cat.id] = cat.link_rewrite;
+      }
+    });
+    
+    return categoriasCache;
+  } catch (error) {
+    console.error("❌ Error categorías:", error.message);
+    return {};
+  }
+}
 
 // === OBTENER PRODUCTOS ===
 async function obtenerProductos() {
@@ -42,17 +74,18 @@ async function obtenerProductos() {
   
   if (!PRESTASHOP_API_KEY) {
     console.warn("⚠️ MODO DEMO");
-    return [
-      { id: 1, nombre: "Juguete", precio: "29.99€", url: `${PRESTASHOP_URL}/producto-1.html`, categoria: "Juguetes", descripcion: "Divertido" }
-    ];
+    return [];
   }
   
   try {
     console.log("🔄 Conectando con PrestaShop API...");
     
-    // === LLAMADA API SIMPLIFICADA ===
+    // Obtener categorías primero
+    const categorias = await obtenerCategorias();
+    
+    // Obtener productos CON categoría
     const response = await fetch(
-      `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,description_short]&output_format=JSON`,
+      `${PRESTASHOP_URL}/api/products?display=[id,name,price,link_rewrite,description_short,id_category_default]&output_format=JSON`,
       {
         headers: {
           'Authorization': `Basic ${Buffer.from(PRESTASHOP_API_KEY + ':').toString('base64')}`
@@ -71,16 +104,21 @@ async function obtenerProductos() {
       return [];
     }
     
-    // Procesar productos
-    productosCache = data.products.map(p => ({
-      id: p.id,
-      nombre: p.name,
-      precio: `${parseFloat(p.price).toFixed(2)}€`,
-      url: `${PRESTASHOP_URL}/es/${p.link_rewrite}-${p.id}.html`,
-      categoria: "Producto",
-      descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 120) : '',
-      activo: true
-    })).slice(0, 50);
+    // Procesar productos con URL CORRECTA
+    productosCache = data.products.map(p => {
+      const categoria = categorias[p.id_category_default] || 'animales';
+      
+      return {
+        id: p.id,
+        nombre: p.name,
+        precio: `${parseFloat(p.price).toFixed(2)}€`,
+        // === URL FORMATO PRESTASHOP REAL ===
+        url: `${PRESTASHOP_URL}/${categoria}/${p.id}-${p.link_rewrite}`,
+        categoria: categoria,
+        descripcion: p.description_short ? p.description_short.replace(/<[^>]*>/g, '').substring(0, 120) : '',
+        activo: true
+      };
+    }).slice(0, 50);
     
     ultimaActualizacion = ahora;
     console.log(`✅ ${productosCache.length} productos cargados`);
@@ -147,7 +185,6 @@ async function generarRespuesta(mensajeUsuario) {
       
       respuesta += "¿Te interesa alguno?";
     }
-    // Búsquedas específicas
     else if (/juguete|niño|niña/i.test(msg)) {
       respuesta = "Tenemos juguetes divertidos. Escribe 'productos' para ver el catálogo.";
     }
